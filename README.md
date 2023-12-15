@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/730334280.svg)](https://zenodo.org/doi/10.5281/zenodo.10390406)
+
 # SGX-Tracer
 
 `sgx-tracer` is a simple C program that uses common Linux `ptrace` functionality to intercept the Intel SGX driver while an application loads an enclave. These intercepted calls are used to create the exact memory dump of an enclave at creation time, allowing Pandora to *truthfully* validate enclave shielding runtimes. 
@@ -8,7 +10,7 @@ A general note:
 
 ## Usage
 
-`sgx-tracer` simply wraps around your enclave call. Just execute your untrusted program as normal and put `sgx-tracer` before it.
+`sgx-tracer` wraps around your enclave call. Just execute your untrusted program as normal and put `sgx-tracer` before it.
 
 ```bash
 make

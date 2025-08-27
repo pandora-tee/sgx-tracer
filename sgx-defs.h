@@ -168,4 +168,40 @@ struct sgx_sigstruct {
 	uint8_t  q2[SGX_MODULUS_SIZE];
 };
 
+
+/*
+ * MRENCLAVE blocks as defined in Intel SDM.
+ */
+
+#define MRENCLAVE_TAG_ECREATE	0x0045544145524345 // "ECREATE\0"
+#define MRENCLAVE_TAG_EADD	0x0000000044444145 // "EADD\0\0\0\0"
+#define MRENCLAVE_TAG_EEXTEND   0x00444E4554584545 // "EEXTEND\0"
+
+struct mrenclave_ecreate {
+	uint64_t tag;
+	uint32_t ssaframesize;
+	uint64_t size;
+	uint8_t  rsvd[44];
+};
+_Static_assert(sizeof(struct mrenclave_ecreate) == 64, "MRENCLAVE block size");
+
+struct mrenclave_eadd {
+	uint64_t tag;
+	uint64_t offset;
+	uint8_t  secinfo[48];
+};
+_Static_assert(sizeof(struct mrenclave_eadd) == 64, "MRENCLAVE block size");
+
+struct mrenclave_eextend {
+	uint64_t tag;
+	uint64_t offset;
+	uint8_t  zeroes[48];
+        uint8_t  blob[256];
+};
+_Static_assert(sizeof(struct mrenclave_eextend) == 5*64, "MRENCLAVE block size");
+
+
+
+
+
 #endif

@@ -77,7 +77,7 @@ void open_dumpfile(uint64_t fd_index)
     {
         char filename[MAX_STRING_BUFFER];
         snprintf (filename, sizeof(filename), "enclave%lu.dump", fd_index);
-        ASSERT( (fd = open(filename, O_RDWR|O_CREAT,
+        ASSERT( (fd = open(filename, O_RDWR|O_CREAT|O_TRUNC,
                     S_IRUSR|S_IWUSR|S_IRGRP|S_IROTH)) >= 0 );
         fds[fd_index] = fd;
     }
@@ -162,11 +162,23 @@ void json_write_secs(FILE* json_fd, struct sgx_secs* secs)
 
 uint64_t encl_base_addr = -1;
 
-/* https://elixir.bootlin.com/linux/v6.6.6/source/arch/x86/include/uapi/asm/sgx.h#L44 */
+FILE *mrenclave_fd = NULL;
+void sgxs_append(void *block, size_t len)
+{
+    if (!mrenclave_fd)
+    {
+        ASSERT( (mrenclave_fd = fopen("enclave0.sgxs", "w+")) >= 0 );
+    }
+
+    ASSERT( write(fileno(mrenclave_fd), block, len) == len);
+}
+
+/* https://elixir.bootlin.com/linux/latest/source/arch/x86/include/uapi/asm/sgx.h#L44 */
 void enclave_create(uint64_t fd_index, pid_t pid, uint64_t arg)
 {
     struct sgx_enclave_create e;
     struct sgx_secs s;
+    struct mrenclave_ecreate mrc = {0x0};
 
     read_mem_pid(pid, &e, arg, sizeof(e));
     printf("\tSGX_IOC_ENCLAVE_CREATE: src=%#llx\n", e.src);
@@ -176,9 +188,14 @@ void enclave_create(uint64_t fd_index, pid_t pid, uint64_t arg)
         s.size, s.base, s.ssa_frame_size, s.miscselect, s.attributes, s.xfrm);
     json_write_secs(json_fds[fd_index], &s);
     encl_base_addr = s.base;
+
+    mrc.tag = MRENCLAVE_TAG_ECREATE;
+    mrc.ssaframesize = s.ssa_frame_size;
+    mrc.size = s.size;
+    sgxs_append(&mrc, sizeof(mrc));
 }
 
-/* https://elixir.bootlin.com/linux/v6.6.6/source/arch/x86/include/uapi/asm/sgx.h#L72 */
+/* https://elixir.bootlin.com/linux/latest/source/arch/x86/include/uapi/asm/sgx.h#L72 */
 void enclave_init(uint64_t fd_index, pid_t pid, uint64_t arg)
 {
     struct sgx_enclave_init i;
@@ -293,20 +310,23 @@ void json_write_tcs(FILE* json_fd, struct sgx_tcs* tcs)
     );
 }
 
-/* https://elixir.bootlin.com/linux/v6.6.6/source/arch/x86/include/uapi/asm/sgx.h#L58 */
+/* https://elixir.bootlin.com/linux/latest/source/arch/x86/include/uapi/asm/sgx.h#L58 */
 void enclave_add_pages(uint64_t fd_index, pid_t pid, uint64_t arg)
 {
     struct sgx_enclave_add_pages p;
     struct sgx_secinfo s;
     char r, w, x;
-    int type;
-    void *page = NULL;
+    int type, measure;
+    uint8_t *page = NULL;
+    struct mrenclave_eadd mra = {0x0};
+    struct mrenclave_eextend mre = {0x0};
 
     read_add_pages_struct(pid, arg, &p);
     read_mem_pid(pid, &s, p.secinfo, sizeof(s));
+    measure = (int) (p.flags & SGX_PAGE_MEASURE);
     printf("\tSGX_IOC_ENCLAVE_ADD_PAGES: src=%#llx; offset=%#llx; "
            "len=%llu; secinfo=%#lx; measure=%d; count=%llu\n",
-            p.src, p.offset, p.length, s.flags, (int) (p.flags & SGX_PAGE_MEASURE), p.count);
+            p.src, p.offset, p.length, s.flags, measure, p.count);
 
     r = s.flags & (0x1 << 0) ? 'R' : '-';
     w = s.flags & (0x1 << 1) ? 'W' : '-';
@@ -337,6 +357,27 @@ void enclave_add_pages(uint64_t fd_index, pid_t pid, uint64_t arg)
     dump_file(fds[fd_index], p.offset, page, p.length);
     //printf("\tPAGE DUMP: ");
     //dump_hex((uint8_t*) page, num_bytes);
+
+
+    for (int j = 0; j < p.length; j += 4096)
+    {
+        mra.tag = MRENCLAVE_TAG_EADD;
+        mra.offset = p.offset + j;
+        memcpy(&mra.secinfo, &s, sizeof(mra.secinfo));
+        sgxs_append(&mra, sizeof(mra));
+
+        if (measure)
+        {
+            for (int i = 0; i < 4096; i += 256)
+            {
+                mre.tag = MRENCLAVE_TAG_EEXTEND;
+                mre.offset = p.offset + j + i;
+                memcpy(mre.blob, page + j + i, sizeof(mre.blob));
+                sgxs_append(&mre, sizeof(mre));
+            }
+        }
+    }
+
     free(page);
 }
 
@@ -448,6 +489,7 @@ int main(int argc, char **argv)
                 printf("closing initialized enclave dump on FD %lu\n", fd);
                 close_json(fd_index);
                 close_dumpfile(fd_index);
+		fclose(mrenclave_fd);
                 break;        
             default:
                 printf("UNKNOWN IOC (probably not SGX-related, ignoring..)\n");
